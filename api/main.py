@@ -21,14 +21,20 @@ app = FastAPI(
 # Load all models once when API starts
 print("Loading models...")
 model     = joblib.load('models/xgb_model.pkl')
-explainer = joblib.load('models/shap_explainer.pkl')
 X_sample  = joblib.load('models/X_sample.pkl')
 client    = Groq(api_key=os.getenv("GROQ_API_KEY"))
 MODEL     = "llama-3.3-70b-versatile"
-print("Models loaded successfully")
+
+# Create explainer once using background sample
+print("Creating SHAP explainer...")
+explainer = shap.TreeExplainer(
+    model,
+    feature_perturbation="tree_path_dependent"
+)
+print("All models loaded successfully")
 
 
-# Input schema — what the API expects
+# Input schema
 class Transaction(BaseModel):
     step:              float
     type:              float
@@ -39,7 +45,7 @@ class Transaction(BaseModel):
     newbalanceDest:    float
 
 
-# Helper — engineer features same as preprocessing
+# Engineer features
 def engineer_features(t: Transaction):
     data = {
         'step':                    t.step,
@@ -57,7 +63,7 @@ def engineer_features(t: Transaction):
     return pd.DataFrame([data])
 
 
-# Helper — get SHAP explanation
+# Get SHAP explanation
 def get_shap_text(df):
     shap_vals = explainer.shap_values(df)[0]
     shap_df   = pd.DataFrame({
@@ -68,7 +74,7 @@ def get_shap_text(df):
     return shap_df.head(5)
 
 
-# Helper — get Groq explanation
+# Get Groq explanation
 def get_groq_explanation(df, fraud_prob, is_fraud, top_features):
     features_text = ""
     for _, row in top_features.iterrows():
@@ -112,13 +118,13 @@ Do not use technical ML terms like SHAP or XGBoost.
     return response.choices[0].message.content
 
 
-# Health check endpoint
+# Health check
 @app.get("/health")
 def health():
     return {"status": "ok", "model": "XGBoost", "llm": "Groq Llama3"}
 
 
-# Main prediction endpoint
+# Predict endpoint
 @app.post("/predict")
 def predict(transaction: Transaction):
     # Step 1: Engineer features
@@ -128,15 +134,15 @@ def predict(transaction: Transaction):
     fraud_prob = float(model.predict_proba(df)[0][1])
     is_fraud   = fraud_prob > 0.3
 
-    # Step 3: SHAP explanation
+    # Step 3: SHAP
     top_features = get_shap_text(df)
 
-    # Step 4: Groq plain English explanation
+    # Step 4: Groq explanation
     explanation = get_groq_explanation(
         df, fraud_prob, is_fraud, top_features
     )
 
-    # Step 5: Return response
+    # Step 5: Return
     return {
         "fraud_probability": round(fraud_prob, 4),
         "is_fraud":          is_fraud,
